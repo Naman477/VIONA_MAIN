@@ -26,21 +26,33 @@ export function AuthProvider({ children }) {
     }
 
     useEffect(() => {
-        // Get initial session
-        supabase.auth.getSession().then(({ data: { session } }) => {
-            setUser(session?.user ?? null);
-            if (session?.user) {
-                fetchProfile(session.user.id);
-            }
+        // Safety timeout — never stay loading forever
+        const timeout = setTimeout(() => {
             setLoading(false);
-        });
+        }, 5000);
+
+        // Get initial session
+        supabase.auth.getSession()
+            .then(({ data: { session } }) => {
+                setUser(session?.user ?? null);
+                if (session?.user) {
+                    fetchProfile(session.user.id).catch(console.error);
+                }
+                setLoading(false);
+                clearTimeout(timeout);
+            })
+            .catch((err) => {
+                console.error('Auth session error:', err);
+                setLoading(false);
+                clearTimeout(timeout);
+            });
 
         // Listen for auth changes
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             async (_event, session) => {
                 setUser(session?.user ?? null);
                 if (session?.user) {
-                    await fetchProfile(session.user.id);
+                    await fetchProfile(session.user.id).catch(console.error);
                 } else {
                     setProfile(null);
                 }
@@ -48,7 +60,10 @@ export function AuthProvider({ children }) {
             }
         );
 
-        return () => subscription.unsubscribe();
+        return () => {
+            subscription.unsubscribe();
+            clearTimeout(timeout);
+        };
     }, []);
 
     // Auth methods
