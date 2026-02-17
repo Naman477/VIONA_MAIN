@@ -1,5 +1,12 @@
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-const API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
+
+// Try these models in order — different models have separate quotas
+const MODELS = [
+    'gemini-1.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash-8b',
+];
 
 /**
  * VIONA's core personality system prompt
@@ -92,7 +99,45 @@ export function detectSmartCommand(message) {
 }
 
 /**
- * Send a message to Gemini and get a response
+ * Try calling a specific Gemini model
+ */
+async function tryModel(modelName, contents) {
+    const url = `${BASE_URL}/${modelName}:generateContent?key=${GEMINI_API_KEY}`;
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            contents,
+            generationConfig: {
+                temperature: 0.8,
+                topP: 0.95,
+                topK: 40,
+                maxOutputTokens: 1024,
+            },
+            safetySettings: [
+                { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
+                { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
+                { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
+                { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' },
+            ]
+        })
+    });
+
+    if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        const errMsg = errData?.error?.message || `HTTP ${response.status}`;
+        throw new Error(`${modelName}: ${errMsg}`);
+    }
+
+    const data = await response.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new Error(`${modelName}: No response text`);
+    return text;
+}
+
+/**
+ * Send a message to Gemini and get a response — tries multiple models
  */
 export async function sendMessage(messages, profile) {
     if (!GEMINI_API_KEY) {
@@ -129,47 +174,30 @@ export async function sendMessage(messages, profile) {
         });
     }
 
-    try {
-        const response = await fetch(`${API_URL}?key=${GEMINI_API_KEY}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents,
-                generationConfig: {
-                    temperature: 0.8,
-                    topP: 0.95,
-                    topK: 40,
-                    maxOutputTokens: 1024,
-                },
-                safetySettings: [
-                    { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
-                    { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
-                    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
-                    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' },
-                ]
-            })
-        });
-
-        if (!response.ok) {
-            const errData = await response.json().catch(() => ({}));
-            console.error('Gemini API error:', errData);
-            throw new Error(errData?.error?.message || `API error: ${response.status}`);
+    // Try each model until one works
+    const errors = [];
+    for (const model of MODELS) {
+        try {
+            console.log(`Trying model: ${model}`);
+            const aiText = await tryModel(model, contents);
+            console.log(`Success with model: ${model}`);
+            return {
+                content: aiText,
+                tone: detectedTone,
+            };
+        } catch (error) {
+            console.warn(`Model ${model} failed:`, error.message);
+            errors.push(error.message);
+            // Continue to next model
         }
-
-        const data = await response.json();
-        const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || "I'm sorry, I couldn't generate a response. Please try again.";
-
-        return {
-            content: aiText,
-            tone: detectedTone,
-        };
-    } catch (error) {
-        console.error('Gemini error:', error);
-        return {
-            content: `Sorry, I encountered an error: ${error.message}. Please try again in a moment.`,
-            tone: detectedTone,
-        };
     }
+
+    // All models failed
+    console.error('All Gemini models failed:', errors);
+    return {
+        content: `😔 I'm having trouble connecting right now. All AI models are at capacity. This usually resolves in a minute. Please try again shortly!\n\n(Technical: ${errors[0]?.includes('Quota') ? 'API rate limit reached' : errors[0]})`,
+        tone: detectedTone,
+    };
 }
 
 export { detectTone };
