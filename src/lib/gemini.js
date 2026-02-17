@@ -1,11 +1,11 @@
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 // Try these models in order — different models have separate quotas
+// Each model specifies its correct API version
 const MODELS = [
-    'gemini-1.5-flash',
-    'gemini-2.0-flash',
-    'gemini-1.5-flash-8b',
+    { name: 'gemini-2.0-flash', version: 'v1beta' },
+    { name: 'gemini-1.5-flash', version: 'v1' },
+    { name: 'gemini-1.5-flash-8b', version: 'v1' },
 ];
 
 /**
@@ -101,8 +101,8 @@ export function detectSmartCommand(message) {
 /**
  * Try calling a specific Gemini model
  */
-async function tryModel(modelName, contents) {
-    const url = `${BASE_URL}/${modelName}:generateContent?key=${GEMINI_API_KEY}`;
+async function tryModel(model, contents) {
+    const url = `https://generativelanguage.googleapis.com/${model.version}/models/${model.name}:generateContent?key=${GEMINI_API_KEY}`;
 
     const response = await fetch(url, {
         method: 'POST',
@@ -127,12 +127,12 @@ async function tryModel(modelName, contents) {
     if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
         const errMsg = errData?.error?.message || `HTTP ${response.status}`;
-        throw new Error(`${modelName}: ${errMsg}`);
+        throw new Error(`${model.name}: ${errMsg}`);
     }
 
     const data = await response.json();
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error(`${modelName}: No response text`);
+    if (!text) throw new Error(`${model.name}: No response text`);
     return text;
 }
 
@@ -178,9 +178,9 @@ export async function sendMessage(messages, profile) {
     const errors = [];
     for (const model of MODELS) {
         try {
-            console.log(`Trying model: ${model}`);
+            console.log(`Trying model: ${model.name}`);
             const aiText = await tryModel(model, contents);
-            console.log(`Success with model: ${model}`);
+            console.log(`Success with model: ${model.name}`);
             return {
                 content: aiText,
                 tone: detectedTone,
